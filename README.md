@@ -114,8 +114,8 @@ The repository currently contains three main workflows.
 | Workflow                                         | Purpose                                    | Interface      |
 | ------------------------------------------------ | ------------------------------------------ | -------------- |
 | `Call Analysis.json`                             | Voice-based grounded real estate assistant | Vapi + Webhook |
-| `RAG QA - OpenRouter + Qdrant + Guardrails.json` | Generic RAG question-answering API         | Webhook        |
-| `Sunrise Residences Grounded Assistant (1).json` | Property-specific conversational assistant | Telegram       |
+| `RAG QA .json`                                   | Generic RAG question-answering API         | Webhook        |
+| `Realestate_Assistant.json`                      | Property-specific conversational assistant | Telegram       |
 
 ---
 
