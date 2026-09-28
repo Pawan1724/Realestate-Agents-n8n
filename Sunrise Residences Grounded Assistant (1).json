@@ -1,0 +1,505 @@
+{
+  "name": "Sunrise Residences Grounded Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message",
+          "*"
+        ],
+        "additionalFields": {}
+      },
+      "id": "d66bbb84-c3ca-4e90-bb6f-bed123e868c0",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        -2080,
+        16
+      ],
+      "webhookId": "8c43589b-6ade-46e9-a6f4-09301feb6944",
+      "credentials": {
+        "telegramApi": {
+          "id": "h9w7ZkLJ9t98tVnO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Telegram Trigger\").item.json.message.chat.id }}",
+        "text": "=I couldn't find enough information in the available information to answer that accurately.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "60498e6f-9331-42a3-91b9-c0ffe392402e",
+      "name": "Send Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -288,
+        288
+      ],
+      "webhookId": "0e472f21-6b14-470b-bc17-2d2e83b05885",
+      "credentials": {
+        "telegramApi": {
+          "id": "h9w7ZkLJ9t98tVnO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/embeddings",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  model: \"openai/text-embedding-3-small\",\n  input: $json.query\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -864,
+        16
+      ],
+      "id": "39e28428-25d0-4805-a8da-0f42cbe1979c",
+      "name": "OpenRouter Query Embedding",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "rneAY94de67ucCij",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://a63040ec-489e-4432-bdb5-783019f79e23.eu-west-2-0.aws.cloud.qdrant.io/collections/rag_documents/points/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  query: $json.data[0].embedding,\n  limit: 5,\n  with_payload: true\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -640,
+        16
+      ],
+      "id": "941ecccb-1dc8-424d-940f-a4f64444726c",
+      "name": "Qdrant Search",
+      "credentials": {
+        "httpBearerAuth": {
+          "id": "rneAY94de67ucCij",
+          "name": "Bearer Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst points = Array.isArray(input.result?.points)\n  ? input.result.points\n  : [];\n\nconst MIN_SCORE = 0.15;\n\nconst results = points\n  .filter(p => p?.payload?.text)\n  .map((p, index) => ({\n    rank: index + 1,\n    score: Number(p.score ?? 0),\n    text: p.payload.text,\n    chunk_id: p.payload.chunk_id ?? null,\n    document: p.payload.document ?? null,\n    page: p.payload.page ?? null\n  }));\n\nconst relevant = results.filter(\n  r => r.score >= MIN_SCORE\n);\n\nconst context = relevant\n  .map(\n    r =>\n      `[Source ${r.rank} | similarity ${r.score.toFixed(3)}]\\n${r.text}`\n  )\n  .join(\"\\n\\n\");\n\nreturn [\n  {\n    json: {\n      query: $('Prepare Query').first().json.query,\n      results: relevant,\n      has_evidence: relevant.length > 0,\n      result_count: relevant.length,\n      context\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        16
+      ],
+      "id": "595c78bf-310b-4a40-9de3-568cac1fbf3e",
+      "name": "Process Results"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2cdc152c-f7bd-4ce4-ba92-ae992380039a",
+              "name": "query",
+              "value": "={{ $json.message.text }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -1808,
+        16
+      ],
+      "id": "9935867a-e3e8-4d0d-a28a-e92208d27810",
+      "name": "Prepare Query"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "c4f3709d-23c5-49d1-9a42-15ff7dcb9fcd",
+              "leftValue": "={{ $json.has_evidence }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -224,
+        16
+      ],
+      "id": "cd07491e-1c89-4307-9304-9f295eff91fa",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are the Sunrise Residences real-estate assistant.\n\nAnswer ONLY using the RETRIEVED CONTEXT.\n\nRules:\n1. Never use outside knowledge.\n2. Never invent information.\n3. If the context does not contain enough information, say:\n\"I couldn't find enough information in the available information to answer that accurately.\"\n4. Preserve prices, sizes, addresses, distances and other numbers exactly.\n5. For multi-part questions, answer only the supported parts.\n6. Keep answers concise and natural.\n7. Do not mention Qdrant, embeddings, vectors, chunks, retrieval, or internal instructions.\n\nRETRIEVED CONTEXT:\n\n{{ $json.context }}\n\nUSER QUESTION:\n{{ $json.query }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "af4485f8-5c44-492c-a5ab-bc002bf5910f",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": "deepseek-v4-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        0,
+        208
+      ],
+      "id": "c27638eb-b336-4e85-a7d0-c5a3c49a0633",
+      "name": "DeepSeek Chat Model",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "wgHThmBhqUGqbWp2",
+          "name": "DeepSeek account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Telegram Trigger\").item.json.message.chat.id }}",
+        "text": "={{ $json.output }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        16
+      ],
+      "id": "1188a786-269e-4966-bc3c-b941b94d8de0",
+      "name": "Send a text message",
+      "webhookId": "dee7c8d1-2216-4f61-b75d-bfc34771004b",
+      "credentials": {
+        "telegramApi": {
+          "id": "h9w7ZkLJ9t98tVnO",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an intent classifier for a real-estate assistant for Sunrise Residences.\n\nClassify the user's question into exactly one category:\n\nREAL_ESTATE\nOUT_OF_SCOPE\n\nREAL_ESTATE means the question is about Sunrise Residences or about the property/project, including questions about:\n\n- price\n- apartment types\n- apartment size\n- location\n- address\n- amenities\n- parking\n- pets\n- nearby places\n- buying process\n- site visits\n- availability\n- facilities\n- project details\n- property features\n\nOUT_OF_SCOPE means the question is unrelated to the property, including:\n\n- programming\n- Python code\n- mathematics\n- jokes\n- general knowledge\n- weather\n- news\n- unrelated technical questions\n- unrelated personal questions\n\nIMPORTANT:\nA question about the property is REAL_ESTATE even if the answer is not contained in the document.\n\nFor example:\n\n\"How many doors are there in each house?\"\n\nmust be classified as:\n\nREAL_ESTATE\n\nbecause it is a property-related question.\n\nReturn ONLY valid JSON.\n\nExample:\n\n{\n  \"intent\": \"REAL_ESTATE\"\n}\n\nUSER QUESTION:\n\n{{ $json.query }}",
+        "messages": {
+          "messageValues": []
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -1584,
+        16
+      ],
+      "id": "8a0e4ece-2a7c-4723-b4c3-8aa3e3bea17a",
+      "name": "intent chcek",
+      "notesInFlow": false
+    },
+    {
+      "parameters": {
+        "model": "deepseek-v4-flash",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [
+        -1648,
+        224
+      ],
+      "id": "ddd53819-0cee-443d-a466-2aa8107b471f",
+      "name": "DeepSeek Chat Model1",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "wgHThmBhqUGqbWp2",
+          "name": "DeepSeek account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.text ?? $json.output ?? \"\";\n\nlet parsed;\n\ntry {\n  parsed = typeof raw === \"string\"\n    ? JSON.parse(raw)\n    : raw;\n} catch (error) {\n  parsed = {\n    intent: \"OUT_OF_SCOPE\"\n  };\n}\n\nreturn [\n  {\n    json: {\n      query: $('Prepare Query').first().json.query,\n      intent: parsed.intent === \"REAL_ESTATE\"\n        ? \"REAL_ESTATE\"\n        : \"OUT_OF_SCOPE\"\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        16
+      ],
+      "id": "ab204091-bd71-46b6-a55b-3aa1ad67d760",
+      "name": "Parse Intent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9d437316-b723-4716-b219-ce7f1dce62a8",
+              "leftValue": "={{ $json.intent }}",
+              "rightValue": "REAL_ESTATE",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1088,
+        192
+      ],
+      "id": "2bcaba09-1023-4eed-8d70-e6bec2f4ac4d",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $(\"Telegram Trigger\").item.json.message.chat.id }}",
+        "text": "=I'm designed to answer questions about Sunrise Residences real-estate information. I can't help with that.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "63a1ad1d-b9e4-4edb-be62-48933020e066",
+      "name": "Send Reply1",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -784,
+        208
+      ],
+      "webhookId": "0e472f21-6b14-470b-bc17-2d2e83b05885",
+      "credentials": {
+        "telegramApi": {
+          "id": "h9w7ZkLJ9t98tVnO",
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Search": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Results": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Query": {
+      "main": [
+        [
+          {
+            "node": "intent chcek",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "intent chcek": {
+      "main": [
+        [
+          {
+            "node": "Parse Intent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DeepSeek Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "intent chcek",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Intent": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "OpenRouter Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send Reply1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6145b157-85fe-4c9c-a808-44fb8ffaf774",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cd63d638daec810fb1104bd1dad1d885ed194b19e56094ba8ae51bb2458b6c8a"
+  },
+  "nodeGroups": [],
+  "id": "C6PV2YBQ9s8jnQGP",
+  "tags": []
+}

@@ -1,0 +1,905 @@
+{
+  "name": "Call Analysis",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "vapi-voice-rag",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "6823bd43-8509-436d-94bc-daa97154b778",
+      "name": "Vapi Inbound Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -4784,
+        272
+      ],
+      "webhookId": "6e99ad46-8d45-416b-88f1-b34254ebf551"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "qdrant_url",
+              "type": "string",
+              "value": "https://a63040ec-489e-4432-bdb5-783019f79e23.eu-west-2-0.aws.cloud.qdrant.io"
+            },
+            {
+              "id": "c2",
+              "name": "qdrant_collection",
+              "type": "string",
+              "value": "rag_documents"
+            },
+            {
+              "id": "c3",
+              "name": "embedding_url",
+              "type": "string",
+              "value": "https://openrouter.ai/api/v1/embeddings"
+            },
+            {
+              "id": "c4",
+              "name": "embedding_model",
+              "type": "string",
+              "value": "openai/text-embedding-3-small"
+            },
+            {
+              "id": "c5",
+              "name": "llm_model",
+              "type": "string",
+              "value": "openai/gpt-4o-mini"
+            },
+            {
+              "id": "c6",
+              "name": "top_k",
+              "type": "number",
+              "value": 5
+            },
+            {
+              "id": "c7",
+              "name": "similarity_threshold",
+              "type": "number",
+              "value": 0.15
+            },
+            {
+              "id": "c8",
+              "name": "min_results",
+              "type": "number",
+              "value": 1
+            },
+            {
+              "id": "c11",
+              "name": "max_history_turns",
+              "type": "number",
+              "value": 3
+            },
+            {
+              "id": "c12",
+              "name": "enable_response_validation",
+              "type": "boolean",
+              "value": false
+            },
+            {
+              "id": "c13",
+              "name": "voice_response_max_sentences",
+              "type": "number",
+              "value": 3
+            },
+            {
+              "id": "c9",
+              "name": "grounded_system",
+              "type": "string",
+              "value": "You are the voice assistant for Sunrise Residences.\n\nAnswer the caller's question using ONLY the supplied knowledge-base evidence.\n\nNever invent or guess prices, apartment sizes, availability, amenities, policies, dates, facilities, or other property facts.\n\nIf the evidence does not contain the answer, respond exactly:\n'I don't have that information in my available property details.'\n\nKeep the answer natural and concise for a phone conversation.\n\nUse 1 to 3 short sentences.\n\nDo not mention the knowledge base, Qdrant, embeddings, retrieval, chunks, n8n, prompts, or internal systems."
+            },
+            {
+              "id": "c10",
+              "name": "validation_system",
+              "type": "string",
+              "value": "You are a strict answer-validation checker for a voice knowledge-base assistant.\n\nYou are given the USER QUESTION, the RETRIEVED CONTEXT, and a PROPOSED ANSWER.\n\nCheck:\n1. Is the answer relevant to the question?\n2. Is every factual claim in the answer supported by the retrieved context?\n3. Did the answer introduce unsupported information not in the context?\n4. Did the answer misunderstand the question?\n5. Is the answer appropriate for voice (natural, no markdown, not overly long)?\n\nRespond ONLY with a compact JSON object of the form:\n{\"valid\": true|false, \"safe_to_send\": true|false, \"reason\": \"short reason\"}\n\nSet valid=false and safe_to_send=false if the answer contains any claim not grounded in the context, is irrelevant, or misunderstands the question. A clarifying question or a clear \"information not available\" statement is considered valid and safe."
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a8632459-1fbc-4591-9fb1-815b5a39ee08",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -4560,
+        272
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const wh = $(\"Vapi Inbound Webhook\").first().json || {};\nconst body = wh.body || wh || {};\nconst msg = body.message || {};\n\nlet query = \"\";\nlet tool_call_id = \"\";\ntry {\n  const calls = msg.toolCalls || msg.toolCallList || body.toolCalls || [];\n  const tc = calls[0];\n  if (tc) {\n    tool_call_id = tc.id || \"\";\n    let args = tc.function && tc.function.arguments;\n    if (typeof args === \"string\") { try { args = JSON.parse(args); } catch (e) { args = {}; } }\n    if (args) { query = args.query || args.question || args.text || \"\"; }\n  }\n} catch (e) {}\n\nif (!query) { query = msg.transcript || body.transcript || body.query || body.text || \"\"; }\n\nconst call = msg.call || body.call || {};\nconst call_id = call.id || body.callId || msg.callId || \"\";\nconst caller_id = (call.customer && call.customer.number) || body.caller || body.from || (call.customer && call.customer.id) || \"\";\nconst session_id = body.session_id || call.id || call_id || caller_id || \"unknown-session\";\nconst timestamp = msg.timestamp || body.timestamp || new Date().toISOString();\n\nlet clean = String(query || \"\");\nclean = clean.replace(/\\b(uh|um|erm|uhh|umm)\\b/gi, \" \");\nclean = clean.replace(/\\s+/g, \" \").trim();\n\nconst valid = clean.length > 0;\n\nreturn [{ json: { query: clean, call_id, caller_id, session_id, tool_call_id, timestamp, valid, t_request: Date.now() } }];"
+      },
+      "id": "f327eaf9-6986-4f58-ab8e-ab0fcf13b05f",
+      "name": "Extract Call Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -4336,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "validreq",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0ba5678e-99ba-4846-be6d-9c838da96147",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -4112,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "kmJLAs5TYTLWxRKG",
+          "cachedResultName": "voice_rag_sessions"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "keyValue": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "9f09c455-b2b6-471f-8358-5d5acd84bf00",
+      "name": "Load Session",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -3888,
+        176
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const ex = $(\"Extract Call Data\").first().json || {};\nconst cfg = $(\"Config\").first().json || {};\n\nlet sessionRow = {};\ntry {\n  const s = $(\"Load Session\").all();\n  if (s.length && s[0].json && Object.keys(s[0].json).length) sessionRow = s[0].json;\n} catch (e) {}\n\nlet history = [];\ntry { if (sessionRow.history_json) history = JSON.parse(sessionRow.history_json); } catch (e) { history = []; }\nif (!Array.isArray(history)) history = [];\n\nconst query = String(ex.query || \"\").trim();\nconst lastQuery = sessionRow.last_query || \"\";\nconst maxTurns = Number(cfg.max_history_turns || 3);\n\n// Lightweight deterministic follow-up resolution using last query\nconst followupRe = /\\b(it|its|that|those|these|this|one|there|then|they|them|he|she|him|her)\\b/i;\nconst startFollow = /^(how long|how much|how many|when|where|why|and |what about|does it|do they|is it|are they|can i)/i;\nconst words = query.split(/\\s+/).filter(Boolean);\nlet resolved_query = query;\nif (history.length > 0 && lastQuery && (words.length <= 7) && (followupRe.test(query) || startFollow.test(query))) {\n  resolved_query = lastQuery.replace(/[?.!]+\\s*$/, \"\") + \" - \" + query;\n}\n\n// Deterministic out-of-scope detection (no LLM). Only flag when a clearly\n// unrelated keyword is present AND no property keyword is present.\nconst oosRe = /\\b(python|javascript|java|c\\+\\+|coding|code|program|programming|algorithm|compile|software|weather|forecast|temperature|sport|sports|football|cricket|basketball|joke|news|stock|stocks|bitcoin|crypto|recipe|cook|movie|song|lyrics|capital of|president|prime minister|integral|derivative|equation|calculus|multiply|divide|square root)\\b/i;\nconst propRe = /\\b(price|cost|rate|bhk|apartment|flat|home|size|sqft|sq ft|square feet|bedroom|bathroom|floor|balcony|park|parking|gym|pool|swimming|amenit|clubhouse|garden|security|pet|location|address|where|near|nearby|metro|school|hospital|available|availab|book|booking|visit|possession|carpet|builtup|built up|maintenance|emi|loan|door|window|facing|view|residence|sunrise|property|project|villa|unit|tower|configuration|payment|brochure|move in|ready)\\b/i;\nlet out_of_scope = false;\nif (oosRe.test(query) && !propRe.test(query)) out_of_scope = true;\nconst in_scope = !out_of_scope;\n\nconst history_text = history.slice(-(maxTurns * 2)).map(function (h) {\n  return (h.role === \"user\" ? \"Caller: \" : \"Assistant: \") + h.content;\n}).join(\"\\n\") || \"(none)\";\n\nreturn [{ json: Object.assign({}, ex, {\n  config: cfg,\n  original_query: query,\n  resolved_query: resolved_query,\n  in_scope: in_scope,\n  out_of_scope: out_of_scope,\n  history: history,\n  history_text: history_text,\n  prev_turn_count: Number(sessionRow.turn_count || 0),\n  t_query_prepared: Date.now(),\n}) }];"
+      },
+      "id": "fc2657d4-ee3a-4662-9476-b87994322433",
+      "name": "Prepare Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -3664,
+        176
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "inscope",
+              "leftValue": "={{ $json.in_scope }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "ca903505-2174-44b7-a0c9-8c1a3be197a5",
+      "name": "In Scope?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -3440,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.embedding_url }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.embedding_model, input: $('Prepare Query').first().json.resolved_query }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "7a985f25-e440-4e3a-87c7-58e3630abd68",
+      "name": "Generate Query Embedding",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -3168,
+        368
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.qdrant_url }}/collections/{{ $('Config').first().json.qdrant_collection }}/points/query",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBearerAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.data[0].embedding, limit: $('Config').first().json.top_k, with_payload: true, with_vector: false }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "3f5ce4f1-ff1f-4010-9d83-c3f920096322",
+      "name": "Qdrant Vector Search",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -2944,
+        368
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $(\"Config\").first().json || {};\nconst resp = $json || {};\nlet points = [];\ntry { points = (resp.result && resp.result.points) || resp.points || []; } catch (e) { points = []; }\nif (!Array.isArray(points)) points = [];\n\nconst threshold = Number(cfg.similarity_threshold);\nconst topK = Number(cfg.top_k) || 5;\nconst minResults = Number(cfg.min_results || 1);\n\nconst seen = new Set();\nconst dedup = [];\nfor (const p of points) {\n  const pl = (p && p.payload) || {};\n  const text = String(pl.text || pl.content || pl.chunk || \"\").trim();\n  if (!text) continue;\n  const key = text.slice(0, 200);\n  if (seen.has(key)) continue;\n  seen.add(key);\n  dedup.push({\n    score: Number(p.score || 0),\n    text: text,\n    document: pl.document || pl.source || pl.file || \"unknown\",\n    page: (pl.page !== undefined && pl.page !== null) ? pl.page : null,\n    chunk_id: pl.chunk_id || p.id || null,\n  });\n}\n\ndedup.sort(function (a, b) { return b.score - a.score; });\nconst ranked = dedup.slice(0, topK);\nconst relevant = ranked.filter(function (r) { return r.score >= threshold; });\nconst top_score = ranked.length ? ranked[0].score : 0;\nconst has_enough = relevant.length >= minResults && top_score >= threshold;\n\nconst context = (has_enough ? relevant : []).map(function (c, i) {\n  return \"SOURCE \" + (i + 1) + \"\\nDocument: \" + c.document + \"\\nPage: \" + (c.page === null ? \"n/a\" : c.page) + \"\\n\\n\" + c.text;\n}).join(\"\\n\\n\");\n\nreturn [{ json: Object.assign({}, $(\"Prepare Query\").first().json, {\n  retrieval_count: points.length,\n  ranked: ranked,\n  relevant_count: relevant.length,\n  top_score: top_score,\n  has_enough: has_enough,\n  context: context,\n  t_retrieval_done: Date.now(),\n}) }];"
+      },
+      "id": "9af95262-42ab-4cbf-a376-db3605a74107",
+      "name": "Process Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2720,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "enough",
+              "leftValue": "={{ $json.has_enough }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "13e296ad-a51d-44df-83f3-5ae87acc4b27",
+      "name": "Enough Evidence?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2464,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.llm_model, temperature: 0.15, max_tokens: 150, messages: [ { role: 'system', content: $('Config').first().json.grounded_system }, { role: 'user', content: 'CONVERSATION HISTORY:\\n' + $json.history_text + '\\n\\nUSER QUESTION:\\n' + $json.resolved_query + '\\n\\nRETRIEVED CONTEXT:\\n' + $json.context } ] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b5b216bf-3e74-44b5-80bb-d540cc83d565",
+      "name": "LLM Grounded Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -2048,
+        16
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "valon",
+              "leftValue": "={{ $('Config').first().json.enable_response_validation }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9d6ba010-2015-4864-b9c8-b8b870f73c2d",
+      "name": "Validation Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1648,
+        16
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: $('Config').first().json.llm_model, temperature: 0, response_format: { type: 'json_object' }, messages: [ { role: 'system', content: $('Config').first().json.validation_system }, { role: 'user', content: 'USER QUESTION:\\n' + $('Process Results').first().json.resolved_query + '\\n\\nRETRIEVED CONTEXT:\\n' + $('Process Results').first().json.context + '\\n\\nPROPOSED ANSWER:\\n' + $json.choices[0].message.content } ] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "a166ec6d-7f5e-4e8d-bf20-24ac274aeac6",
+      "name": "Answer Validation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -1104,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "let answer = \"\";\ntry { answer = $(\"LLM Grounded Answer\").first().json.choices[0].message.content; } catch (e) { answer = \"\"; }\n\nlet verdict = { valid: false, safe_to_send: false, reason: \"unparsed\" };\ntry {\n  const raw = $json.choices[0].message.content;\n  verdict = (typeof raw === \"string\") ? JSON.parse(raw) : raw;\n} catch (e) {}\n\nconst ok = verdict && verdict.valid === true && verdict.safe_to_send !== false && answer && answer.trim().length > 0;\nconst final_answer = ok ? answer : \"I don't have that information in my available property details.\";\n\nreturn [{ json: Object.assign({}, $(\"Process Results\").first().json, {\n  final_answer: final_answer,\n  validation: verdict,\n  response_status: ok ? \"success\" : \"validation_failed\",\n  t_answer_done: Date.now(),\n}) }];"
+      },
+      "id": "81a1af89-a426-42cd-8b78-9a460b29626c",
+      "name": "Validate Gate",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function g(name) { try { const a = $(name).all(); return (a.length && a[0].json) ? a[0].json : {}; } catch (e) { return {}; } }\nconst pq = g(\"Prepare Query\");\nconst ex = g(\"Extract Call Data\");\nconst cfg = pq.config || {};\nconst cur = $json || {};\n\nlet final_answer = cur.final_answer || \"I'm sorry, I couldn't process that request.\";\n// Sanitize for a clean spoken response: single line, no markdown, no JSON fences.\nfinal_answer = String(final_answer);\nfinal_answer = final_answer.replace(/```[\\s\\S]*?```/g, \" \");\nfinal_answer = final_answer.replace(/[\\r\\n]+/g, \" \");\nfinal_answer = final_answer.replace(/[*_#`>]/g, \"\");\nfinal_answer = final_answer.replace(/\\s+/g, \" \").trim();\n\nconst maxTurns = Number(cfg.max_history_turns || 3);\nlet history = Array.isArray(pq.history) ? pq.history.slice() : [];\nhistory.push({ role: \"user\", content: pq.resolved_query || ex.query || \"\" });\nhistory.push({ role: \"assistant\", content: final_answer });\nif (history.length > maxTurns * 2) history = history.slice(-(maxTurns * 2));\n\nconst t_response = Date.now();\nconst t_request = Number(cur.t_request || pq.t_request || ex.t_request || 0);\nconst t_prepared = Number(cur.t_query_prepared || pq.t_query_prepared || 0);\nconst t_retrieval = Number(cur.t_retrieval_done || 0);\nconst t_answer = Number(cur.t_answer_done || 0);\nconst timings = {\n  retrieval_latency_ms: (t_retrieval && t_prepared) ? (t_retrieval - t_prepared) : null,\n  llm_latency_ms: (t_answer && t_retrieval) ? (t_answer - t_retrieval) : null,\n  total_latency_ms: t_request ? (t_response - t_request) : null,\n};\n\nreturn [{ json: {\n  session_id: pq.session_id || ex.session_id || \"unknown-session\",\n  call_id: pq.call_id || ex.call_id || \"\",\n  caller_id: pq.caller_id || ex.caller_id || \"\",\n  tool_call_id: ex.tool_call_id || pq.tool_call_id || \"\",\n  final_answer: final_answer,\n  history_json: JSON.stringify(history),\n  turn_count: (Number(pq.prev_turn_count || 0)) + 1,\n  last_query: pq.resolved_query || ex.query || \"\",\n  last_activity: new Date().toISOString(),\n  top_score: (cur.top_score !== undefined) ? cur.top_score : 0,\n  retrieval_count: (cur.retrieval_count !== undefined) ? cur.retrieval_count : 0,\n  response_status: cur.response_status || \"success\",\n  model: cfg.llm_model || \"\",\n  timings: timings,\n} }];"
+      },
+      "id": "087505df-ef05-4484-9022-5a2b90f48793",
+      "name": "Compose Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -336,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let answer = \"\";\ntry { answer = $(\"LLM Grounded Answer\").first().json.choices[0].message.content; } catch (e) { answer = \"\"; }\nanswer = String(answer || \"\").trim();\nconst ok = answer.length > 0;\nconst final_answer = ok ? answer : \"Sorry, I'm having trouble checking that information right now.\";\nreturn [{ json: Object.assign({}, $(\"Process Results\").first().json, {\n  final_answer: final_answer,\n  response_status: ok ? \"success\" : \"llm_error\",\n  t_answer_done: Date.now(),\n}) }];"
+      },
+      "id": "a32ab4f7-222f-46f2-96af-f16f167fed03",
+      "name": "Extract Answer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -752,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "final_answer",
+              "type": "string",
+              "value": "I don't have that information in my available property details."
+            },
+            {
+              "id": "s2",
+              "name": "response_status",
+              "type": "string",
+              "value": "no_relevant_context"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "56934303-6274-4492-8095-7678bc80c1ea",
+      "name": "Safe Answer (No Evidence)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -752,
+        672
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "o1",
+              "name": "final_answer",
+              "type": "string",
+              "value": "I'm designed to help with Sunrise Residences real-estate information, so I can't help with that."
+            },
+            {
+              "id": "o2",
+              "name": "response_status",
+              "type": "string",
+              "value": "out_of_scope"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "76c5870b-0b5d-4fb0-8076-4a719ea87567",
+      "name": "Out of Scope Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        -752,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ results: [ { toolCallId: $json.tool_call_id || '', result: \"Sorry, I couldn't understand that request. Could you please repeat your question?\" } ] }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "5d8f0aa5-286c-422b-9b9a-f64ab7cafc52",
+      "name": "Respond Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        -3888,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ results: [ { toolCallId: $json.tool_call_id, result: $json.final_answer } ] }) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "da8fe2f7-58fa-4c0b-be25-31391ea67475",
+      "name": "Respond to Vapi",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        336,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "kmJLAs5TYTLWxRKG",
+          "cachedResultName": "voice_rag_sessions"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "session_id",
+              "keyValue": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "matchingColumns": [
+            "session_id"
+          ],
+          "value": {
+            "session_id": "={{ $json.session_id }}",
+            "call_id": "={{ $json.call_id }}",
+            "caller_id": "={{ $json.caller_id }}",
+            "history_json": "={{ $json.history_json }}",
+            "turn_count": "={{ $json.turn_count }}",
+            "last_query": "={{ $json.last_query }}",
+            "last_activity": "={{ $json.last_activity }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "be7dd2bd-93a7-4acd-a82a-1d8e09a1ebcc",
+      "name": "Save Session",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        -112,
+        512
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={{ JSON.stringify({ call_id: $('Compose Response').first().json.call_id, session_id: $('Compose Response').first().json.session_id, query: $('Compose Response').first().json.last_query, retrieval_count: $('Compose Response').first().json.retrieval_count, top_score: $('Compose Response').first().json.top_score, model: $('Compose Response').first().json.model, response_status: $('Compose Response').first().json.response_status, timings: $('Compose Response').first().json.timings }) }}",
+        "options": {}
+      },
+      "id": "03db0fc4-2b2d-43a1-9bd6-71734b064dcd",
+      "name": "Structured Log",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        112,
+        512
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Vapi Inbound Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Extract Call Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Call Data": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "main": [
+        [
+          {
+            "node": "Load Session",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Session": {
+      "main": [
+        [
+          {
+            "node": "Prepare Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Query": {
+      "main": [
+        [
+          {
+            "node": "In Scope?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "In Scope?": {
+      "main": [
+        [
+          {
+            "node": "Generate Query Embedding",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Out of Scope Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Query Embedding": {
+      "main": [
+        [
+          {
+            "node": "Qdrant Vector Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qdrant Vector Search": {
+      "main": [
+        [
+          {
+            "node": "Process Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Results": {
+      "main": [
+        [
+          {
+            "node": "Enough Evidence?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enough Evidence?": {
+      "main": [
+        [
+          {
+            "node": "LLM Grounded Answer",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Answer (No Evidence)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Grounded Answer": {
+      "main": [
+        [
+          {
+            "node": "Validation Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Answer Validation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract Answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Validation": {
+      "main": [
+        [
+          {
+            "node": "Validate Gate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gate": {
+      "main": [
+        [
+          {
+            "node": "Compose Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Response": {
+      "main": [
+        [
+          {
+            "node": "Respond to Vapi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Answer": {
+      "main": [
+        [
+          {
+            "node": "Compose Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe Answer (No Evidence)": {
+      "main": [
+        [
+          {
+            "node": "Compose Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Out of Scope Response": {
+      "main": [
+        [
+          {
+            "node": "Compose Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Vapi": {
+      "main": [
+        [
+          {
+            "node": "Save Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Session": {
+      "main": [
+        [
+          {
+            "node": "Structured Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "7b6f9d7b-bb19-4955-b729-028720650c91",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "cd63d638daec810fb1104bd1dad1d885ed194b19e56094ba8ae51bb2458b6c8a"
+  },
+  "nodeGroups": [
+    {
+      "id": "2f3545d3-6b8d-4670-a851-b4d0db79054c",
+      "name": "Retrieval",
+      "nodeIds": [
+        "7a985f25-e440-4e3a-87c7-58e3630abd68",
+        "3f5ce4f1-ff1f-4010-9d83-c3f920096322",
+        "9af95262-42ab-4cbf-a376-db3605a74107",
+        "13e296ad-a51d-44df-83f3-5ae87acc4b27"
+      ],
+      "description": "Embed the resolved query once with OpenRouter, run a single Qdrant vector search, then dedupe/rank chunks and check evidence confidence."
+    },
+    {
+      "id": "657fc56a-2e0a-4c2e-b184-2dfccedbfb53",
+      "name": "Response & Logging",
+      "nodeIds": [
+        "087505df-ef05-4484-9022-5a2b90f48793",
+        "da8fe2f7-58fa-4c0b-be25-31391ea67475",
+        "be7dd2bd-93a7-4acd-a82a-1d8e09a1ebcc",
+        "03db0fc4-2b2d-43a1-9bd6-71734b064dcd"
+      ],
+      "description": "Sanitize the final answer, respond to Vapi immediately, then persist session state and write a structured log with latency timings."
+    }
+  ],
+  "id": "jyUxYxbKPEUgT2bl",
+  "tags": []
+}
